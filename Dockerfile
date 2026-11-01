@@ -14,6 +14,9 @@ RUN pip install --only-binary=:all: --no-deps -r requirements.txt \
     && pip uninstall -y pip setuptools wheel || true
 
 COPY siloquy ./siloquy
+# Readable but not writable by the app user, whatever the host checkout's
+# permissions were (a umask 077 checkout would otherwise be unreadable).
+RUN chown -R root:root /app/siloquy && chmod -R u=rwX,go=rX /app/siloquy
 
 # Unprivileged user with no shell and no home directory.
 RUN groupadd --system --gid 10001 siloquy \

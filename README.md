@@ -24,6 +24,8 @@ Siloquy is an independent project. It is not affiliated with or endorsed by the 
 - **CPU / RAM:** by default, what **Silo itself** uses, including its ffmpeg transcoders. This is comparable to Tauticord's Plex-only figures. CPU is a share of the whole machine, rounded to the nearest 5%. RAM is shown in GB. Set `RESOURCE_SCOPE=host` to show the whole machine instead (`Host CPU` / `Host RAM`), which includes everything else running on it.
 - **Storage:** adds up your library drives.
 
+Optionally, Siloquy can also give members an **@Watching role while they're playing something on Silo**, so you can warn just those people before a restart. See [@Watching role](#optional-watching-role).
+
 ### How fast the counters update
 Discord lets a bot rename a channel only **twice every 10 minutes**, and Tauticord has the same limit. Siloquy checks Silo every 30 seconds:
 - A change like a stream starting usually shows within 30–60 seconds.
@@ -38,16 +40,16 @@ Discord lets a bot rename a channel only **twice every 10 minutes**, and Tautico
 |---|---|
 | Silo access | Uses an API key limited to **`admin:monitor:read`**, which is read-only. At startup it checks the key and **refuses to run if the key has full admin access**. |
 | Network | Plain `http` is only allowed to local addresses: a Docker container name, `localhost`, `host.docker.internal`, or a private LAN IP. Anything else must use `https`. Redirects are never followed and proxy settings are ignored, so the key only ever goes to your Silo. |
-| Requests | GET requests only, to 5 fixed paths. The health check is sent without the key. |
-| Personal data | Usernames, titles, IPs and device names are discarded as soon as a response is read. Channel names contain **only counts and percentages**. Nothing personal is logged. |
+| Requests | GET requests only, to 5 fixed paths (plus an account's profile list when an admin uses `/watching`). The health check is sent without the key. |
+| Personal data | Titles, IPs and device names are discarded as soon as a response is read. Channel names contain **only counts and percentages**. Nothing personal is logged. The optional watching role keeps only Discord user IDs and Silo's account/profile ID numbers, never names. |
 | Secrets | Read from Docker secret files. The bot refuses files anyone on the server can read, never prints secrets, and scrubs them from every log line and error. |
-| Discord | Asks Discord for the bare minimum (no message reading, no member list) and has no commands. Works in **one** server and leaves any other it's added to. Only renames or deletes channels it created. Nobody can join its voice channels. |
+| Discord | Asks Discord for the bare minimum (no message reading, no member list). Has no commands unless the watching role is on, and then only admin-only `/watching` commands whose answers only the admin sees. Works in **one** server and leaves any other it's added to. Only renames or deletes channels it created. Nobody can join its voice channels. |
 | Container | Runs as a non-root user with a read-only filesystem, no extra privileges, no published ports and capped memory. It has no access to the Docker socket. |
 | Dependencies | `discord.py`, `aiohttp` and their dependencies, pinned to exact versions and installed from prebuilt packages only. |
 
 **What's left if something leaks:**
 - **Silo key:** someone could *read* your Silo monitoring data (usernames, IPs, devices, watch history), but not change anything or stop streams. This is the narrowest Silo permission that includes transcode and user counts.
-- **Discord token:** someone could do whatever the bot's role allows. Step 7 limits that to Siloquy's own two categories.
+- **Discord token:** someone could do whatever the bot's role allows. Step 7 limits that to Siloquy's own two categories. With the watching role on, the bot also has Manage Roles, so they could hand out roles that sit **below** Siloquy's role. Keeping Siloquy's role directly above @Watching limits that to @Watching.
 
 ---
 
@@ -67,10 +69,10 @@ You need Docker with Compose v2, a Silo server, and admin rights on Silo and on 
 Open this link with your Application ID in place of `APP_ID`:
 
 ```
-https://discord.com/oauth2/authorize?client_id=APP_ID&scope=bot&permissions=1049616
+https://discord.com/oauth2/authorize?client_id=APP_ID&scope=bot+applications.commands&permissions=1049616
 ```
 
-That permission number covers **View Channels**, **Manage Channels** and **Connect**, and nothing else.
+That permission number covers **View Channels**, **Manage Channels** and **Connect**, and nothing else. `applications.commands` lets the optional `/watching` commands appear; Siloquy registers none unless you turn that feature on.
 
 To find your **server ID**, turn on Discord **Settings → Advanced → Developer Mode**, then right-click your server's icon and choose **Copy Server ID**.
 
@@ -177,6 +179,36 @@ If you'd rather build from source, add `compose.build.yml` to `COMPOSE_FILE` in 
 
 ---
 
+## Optional: @Watching role
+
+Gives linked members a role while they're playing something on Silo, and takes it away shortly after they stop. Use it to warn only the people who'd notice: `@Watching restarting Silo in 5 minutes`.
+
+It uses the same read-only Silo key. It doesn't need any extra Discord intents.
+
+### Set it up
+1. **Create the role.** In **Server Settings → Roles → Create Role**, name it (for example `Watching`). Don't give it any moderator or admin permissions; Siloquy refuses to use a role that has them. Turn on **Allow anyone to @mention this role** only if you want everyone to be able to ping it.
+2. **Let Siloquy manage it.** On **Siloquy's role**, turn **Manage Roles** **on**. Then drag Siloquy's role so it sits **directly above `Watching`** and below every role with moderator or admin powers. A bot can hand out any role below its own, so keeping it low means a leaked token can only give out `Watching`. Siloquy's log warns if its role sits above any such roles. (Step 7's Manage Channels change is separate; leave that off.)
+3. **Turn it on.** Right-click the role, choose **Copy Role ID**, and add it to `.env`:
+   ```
+   WATCHING_ROLE_ID=123456789012345678
+   ```
+   Then run `docker compose up -d`. The log should show `Watching role enabled`.
+4. **Link people** with `/watching link`. Pick the member and their Silo account; both lists fill in as you type.
+   - `profile` is optional. Leave it empty to count any profile on the account. Pick one when an account is shared, so that only that person's profile gives them the role.
+   - `/watching list` shows who's linked (🟢 = has the role right now). `/watching unlink` removes someone and takes the role away.
+   - Only members with **Manage Roles** can see or use these commands, and only you see the answers.
+
+### How it behaves
+- The role is added within one check of Silo (30 seconds by default; set `POLL_SECONDS=15` for quicker).
+- Paused playback still counts as watching.
+- The role is removed after `WATCHING_GRACE_SECONDS` (60 by default) with nothing playing, so it doesn't flicker between episodes.
+- If Silo can't be reached, roles stay as they are rather than being removed from everyone.
+- Siloquy only removes the role from people it gave it to. If you give someone the role by hand, it stays.
+- Changing or removing `WATCHING_ROLE_ID` takes the old role back from everyone Siloquy gave it to. Links are kept.
+- Links are stored in `data/watching.json` as Discord user IDs and Silo ID numbers only.
+
+---
+
 ## Troubleshooting
 
 | Log message | Fix |
@@ -187,6 +219,9 @@ If you'd rather build from source, add `compose.build.yml` to `COMPOSE_FILE` in 
 | `No permission to rename the … channel` | On each Siloquy category, give the bot's role **View Channel**, **Connect** and **Manage Channels**, then sync the channels. |
 | `SILO_URL uses plain http to a non-internal host` | Use `https`, a LAN IP, `host.docker.internal`, or the shared Docker network. |
 | `waiting on Discord's rename limit` | This is normal: Discord's two-renames-per-10-minutes limit. The new value shows when the wait ends. |
+| `Watching role paused: …` | The message says what to fix: usually Manage Roles is off on Siloquy's role, Siloquy's role is below `Watching`, or `Watching` has moderator permissions. It resumes on its own once fixed. |
+| `/watching` doesn't appear | Restart Discord. If it still isn't there, the log has a re-invite link that adds slash commands. Re-inviting keeps the bot's channels and settings. |
+| A linked member never gets the role | Check `/watching list` shows the member linked to the right account, and that the profile (if set) is the one they're playing on. |
 | 🔴 **Offline** but Silo is running | Siloquy can't reach `SILO_URL`. From the server, check `curl <SILO_URL>/api/v1/health`. |
 
 `chmod: cannot access 'secrets/*'` during install isn't an error in the files. It happens because the folder is already locked to the bot's user, so your shell can't expand the `*`. Name the files directly, as step 4 does.
@@ -205,6 +240,8 @@ If you'd rather build from source, add `compose.build.yml` to `COMPOSE_FILE` in 
 | `STATS_CATEGORY` / `PERFORMANCE_CATEGORY` | `📡 Silo Stats` / `📊 Performance` | Only used when the categories are first created. Rename them in Discord any time. |
 | `SILOQUY_TAG` | `latest` | Image version to run, e.g. `1.2` or `1.2.0`. |
 | `RESOURCE_SCOPE` | `silo` | `silo` shows Silo's own CPU and RAM, including transcoders. `host` shows the whole machine. |
+| `WATCHING_ROLE_ID` | (none) | Turns on the [@Watching role](#optional-watching-role). |
+| `WATCHING_GRACE_SECONDS` | `60` | 0–900. How long after playback stops before the role is removed. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR`. |
 | `ALLOW_UNSCOPED_KEY` | `false` | Leave it `false`. |
 

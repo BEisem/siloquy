@@ -7,14 +7,18 @@ Security properties:
   * Proxy environment variables are ignored (trust_env=False), so the token
     only ever goes to SILO_URL.
   * Response bodies are size-capped and must be JSON.
-  * Only the handful of fields Siloquy needs are extracted; usernames, titles,
-    IPs and device details are dropped immediately and never logged or posted.
+  * Only the handful of fields Siloquy needs are extracted; titles, IPs and
+    device details are dropped immediately and never logged or posted.
+    Sessions keep only the viewer's opaque account/profile IDs (for the
+    optional watching role). Usernames and profile names are read only to
+    answer an admin's /watching command, never stored, logged or posted.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -41,6 +45,23 @@ PATH_SCOPE_PROBE = "/api/v2/admin/system/build"
 _ALLOWED_PATHS = frozenset(
     {PATH_HEALTH, PATH_SESSIONS, PATH_RESOURCES, PATH_USERS, PATH_SCOPE_PROBE}
 )
+# One templated path: an account's household profiles (watching role only).
+# The ID must be all digits, as Silo's own scope check requires, so nothing
+# else can ever be spliced into the URL.
+_PROFILES_RE = re.compile(r"/api/v2/admin/users/[0-9]{1,20}/profiles")
+# Silo IDs are opaque strings; accept only short, plain ones.
+_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _is_allowed(path: str) -> bool:
+    return path in _ALLOWED_PATHS or _PROFILES_RE.fullmatch(path) is not None
+
+
+def clean_id(v: Any) -> str | None:
+    """A Silo ID as a short plain string, or None."""
+    if isinstance(v, int) and not isinstance(v, bool):
+        v = str(v)
+    return v if isinstance(v, str) and _ID_RE.fullmatch(v) else None
 
 
 class SiloError(Exception):
@@ -57,6 +78,17 @@ class SessionInfo:
     paused: bool
     remote: bool
     bitrate_kbps: int
+    # Opaque IDs of who is watching; never names. None when Silo omits them.
+    user_id: str | None = None
+    profile_id: str | None = None
+
+
+@dataclass(frozen=True)
+class NamedID:
+    """An account or profile, for /watching answers only (never stored)."""
+
+    id: str
+    name: str
 
 
 @dataclass(frozen=True)
@@ -96,7 +128,7 @@ class SiloClient:
     async def _get(
         self, path: str, params: dict[str, str] | None = None, *, auth: bool = True
     ) -> tuple[int, Any]:
-        if path not in _ALLOWED_PATHS:
+        if not _is_allowed(path):
             raise SiloError("refusing to request a non-allowlisted path")
         assert self._session is not None
         headers = {"Authorization": f"Bearer {self._key.reveal()}"} if auth else {}
@@ -180,6 +212,22 @@ class SiloClient:
     async def user_count(self) -> int:
         return len(await self._paged(PATH_USERS))
 
+    async def accounts(self) -> list[NamedID]:
+        """Silo accounts (ID + username), for linking."""
+        return _named(await self._paged(PATH_USERS), "username")
+
+    async def profiles(self, user_id: str) -> list[NamedID]:
+        """One account's household profiles (ID + name), for linking."""
+        if not re.fullmatch(r"[0-9]{1,20}", user_id or ""):
+            raise SiloError("invalid account ID")
+        # Not paginated: Silo answers 422 to unknown query parameters.
+        path = f"/api/v2/admin/users/{user_id}/profiles"
+        data = await self._get_ok(path)
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            raise SiloError("profiles returned an unexpected shape")
+        return _named([i for i in items if isinstance(i, dict)], "name")
+
     async def resources(self) -> Resources:
         data = await self._get_ok(PATH_RESOURCES)
         if not isinstance(data, dict) or not data.get("available"):
@@ -234,7 +282,18 @@ def _session_from(item: dict[str, Any]) -> SessionInfo:
         paused=item.get("is_paused") is True,
         remote=item.get("stream_location") == "remote",
         bitrate_kbps=max(0, bitrate),
+        user_id=clean_id(item.get("user_id")),
+        profile_id=clean_id(item.get("profile_id")),
     )
+
+
+def _named(items: list[dict[str, Any]], name_field: str) -> list[NamedID]:
+    out: list[NamedID] = []
+    for item in items:
+        iid, name = clean_id(item.get("id")), item.get(name_field)
+        if iid and isinstance(name, str) and name.strip():
+            out.append(NamedID(iid, name.strip()[:100]))
+    return out
 
 
 def _library_storage(disks: Any) -> tuple[float | None, float | None]:
