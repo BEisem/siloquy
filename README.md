@@ -196,6 +196,7 @@ It uses the same read-only Silo key. It doesn't need any extra Discord intents.
 4. **Link people** with `/watching link`. Pick the member and their Silo account; both lists fill in as you type.
    - `profile` is optional. Leave it empty to count any profile on the account. Pick one when an account is shared, so that only that person's profile gives them the role.
    - `/watching list` shows who's linked (🟢 = has the role right now). `/watching unlink` removes someone and takes the role away.
+   - `/watching unlinked` lists active Silo accounts nobody is linked to yet, most recently active first, so you can see who's left to link.
    - Only members with **Manage Roles** can see or use these commands, and only you see the answers.
 
 ### How it behaves

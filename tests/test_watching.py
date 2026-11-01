@@ -467,6 +467,44 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(r"Bob\_\*bold\*", text)
         self.assertIn(f"🟢 <@{BOB}> → **alice** · Kids", text)
 
+    async def test_unlinked(self):
+        self.m.silo.accounts = mock.AsyncMock(return_value=[
+            NamedID("7", "alice", last_active=1_793_000_000.0),
+            NamedID("8", "Bob_*bold*", last_active=1_793_500_000.0),
+            NamedID("9", "carol"),
+            NamedID("10", "dave", enabled=False),
+            NamedID("11", "erin"),
+        ])
+        self.m.store.links = {ALICE: w.Link("7"), BOB: w.Link("11", "kids")}
+        sent = await self.run_cmd("unlinked", interaction(self.g))
+        lines = sent[-1].splitlines()
+        self.assertEqual(lines[0], "**2 of 4 active Silo accounts aren't linked:**")
+        # Most recently active first, never-active last; disabled hidden; linked
+        # (including profile-only links) excluded; names escaped.
+        self.assertEqual(lines[1], r"• **Bob\_\*bold\*** · last active <t:1793500000:R>")
+        self.assertEqual(lines[2], "• **carol** · never active")
+        self.assertIn("1 disabled account not shown", sent[-1])
+        self.assertNotIn("alice", sent[-1])
+        self.assertNotIn("erin", sent[-1])
+
+    async def test_unlinked_all_linked_and_silo_down(self):
+        self.m.silo.accounts = mock.AsyncMock(return_value=[NamedID("7", "alice")])
+        self.m.store.links = {ALICE: w.Link("7")}
+        sent = await self.run_cmd("unlinked", interaction(self.g))
+        self.assertIn("Every active Silo account is linked", sent[-1])
+        self.m._accounts = None
+        self.m.silo.accounts = mock.AsyncMock(side_effect=SiloError("x"))
+        sent = await self.run_cmd("unlinked", interaction(self.g))
+        self.assertIn("Couldn't reach Silo", sent[-1])
+        sent = await self.run_cmd("unlinked", interaction(self.g, manage_roles=False))
+        self.assertIn("Manage Roles", sent[-1])
+
+    def test_unlinked_long_list_fits_one_message(self):
+        accounts = [NamedID(str(i), f"user{i:04d}") for i in range(500)]
+        text = w.render_unlinked(accounts, {})
+        self.assertLessEqual(len(text), 2000)
+        self.assertIn("more", text.splitlines()[-1])
+
     async def test_unlink(self):
         self.m.store.links = {ALICE: w.Link("7")}
         sent = await self.run_cmd("unlink", interaction(self.g), fake_member(ALICE))
@@ -481,7 +519,7 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["name"], "watching")
         self.assertEqual(int(payload["default_member_permissions"]), discord.Permissions(manage_roles=True).value)
         self.assertFalse(payload.get("dm_permission", True))
-        self.assertEqual(sorted(o["name"] for o in payload["options"]), ["link", "list", "unlink"])
+        self.assertEqual(sorted(o["name"] for o in payload["options"]), ["link", "list", "unlink", "unlinked"])
 
 
 # ---------------------------------------------------------------- Silo client additions
@@ -499,7 +537,10 @@ def silo_app():
         if not ok(request):
             return web.json_response({}, status=401)
         return web.json_response({"items": [
-            {"id": "7", "username": "alice", "email": "a@x"}, {"id": "8", "username": " "},
+            {"id": "7", "username": "alice", "email": "a@x", "enabled": True,
+             "last_active_at": "2026-11-01T17:30:00.000Z"},
+            {"id": "8", "username": " "}, {"id": "10", "username": "dave", "enabled": False,
+                                           "last_active_at": None},
             {"id": "../9", "username": "evil"},
         ], "page": {"has_more": False}})
 
@@ -545,7 +586,9 @@ class SiloClientTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_accounts_and_profiles(self):
         async with SiloClient(self.url, Secret(KEY)) as c:
-            self.assertEqual(await c.accounts(), [NamedID("7", "alice")])
+            self.assertEqual(await c.accounts(), [
+                NamedID("7", "alice", last_active=1793554200.0), NamedID("10", "dave", enabled=False),
+            ])
             self.assertEqual(await c.profiles("7"), [NamedID("p1", "Alice")])
             for bad in ("../7", "7/../../settings", "", "abc"):
                 with self.assertRaises(SiloError):

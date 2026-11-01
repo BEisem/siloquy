@@ -89,6 +89,9 @@ class NamedID:
 
     id: str
     name: str
+    # Accounts only (profiles leave the defaults).
+    enabled: bool = True
+    last_active: float | None = None  # epoch seconds
 
 
 @dataclass(frozen=True)
@@ -292,7 +295,11 @@ def _named(items: list[dict[str, Any]], name_field: str) -> list[NamedID]:
     for item in items:
         iid, name = clean_id(item.get("id")), item.get(name_field)
         if iid and isinstance(name, str) and name.strip():
-            out.append(NamedID(iid, name.strip()[:100]))
+            out.append(NamedID(
+                iid, name.strip()[:100],
+                enabled=item.get("enabled") is not False,
+                last_active=_instant(item.get("last_active_at")),
+            ))
     return out
 
 

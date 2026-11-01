@@ -9,7 +9,7 @@ Security properties:
     from members Siloquy gave it to. A role an admin gave by hand is left alone.
   * Refuses a role that carries moderator or admin permissions, a role managed
     by an integration, or @everyone.
-  * /watching needs Manage Roles, works only in the configured server, and its
+  * /watching (link, unlink, list, unlinked) needs Manage Roles, works only in the configured server, and its
     answers are visible only to the admin who ran it.
   * Stores only Discord user IDs and Silo's opaque account/profile IDs.
     Usernames and profile names are fetched to answer an admin's command and
@@ -425,6 +425,40 @@ def choices(items: list[NamedID], current: str) -> list[app_commands.Choice[str]
     return [app_commands.Choice(name=i.name[:100], value=i.id) for i in hits[:25]]
 
 
+def _fit(lines: list[str], limit: int = 1900) -> str:
+    """Join lines, cutting off with a count if over Discord's message limit."""
+    out, used = [], 0
+    for i, line in enumerate(lines):
+        if used + len(line) + 1 > limit:
+            out.append(f"…and {len(lines) - i} more")
+            break
+        out.append(line)
+        used += len(line) + 1
+    return "\n".join(out)
+
+
+def render_unlinked(accounts: list[NamedID], links: dict[int, Link]) -> str:
+    """Enabled Silo accounts that no Discord member is linked to, most recently active first."""
+    linked = {link.account for link in links.values()}
+    free = [a for a in accounts if a.id not in linked]
+    shown = [a for a in free if a.enabled]
+    disabled = len(free) - len(shown)
+    lines: list[str] = []
+    if not shown:
+        lines.append("Every active Silo account is linked to a Discord member.")
+    else:
+        lines.append(f"**{len(shown)} of {sum(a.enabled for a in accounts)} active Silo accounts aren't linked:**")
+        shown.sort(key=lambda a: (a.last_active is None, -(a.last_active or 0), a.name.lower()))
+        for a in shown:
+            seen = f"last active <t:{int(a.last_active)}:R>" if a.last_active else "never active"
+            lines.append(f"• **{_safe(a.name)}** · {seen}")
+    if disabled:
+        lines.append(f"({disabled} disabled account{'s' if disabled != 1 else ''} not shown)")
+    if shown:
+        lines.append("Link one with `/watching link`.")
+    return _fit(lines)
+
+
 def _safe(text: str) -> str:
     return discord.utils.escape_mentions(discord.utils.escape_markdown(text))
 
@@ -545,6 +579,21 @@ class WatchingCommands(app_commands.Group):
         await interaction.response.defer(ephemeral=True, thinking=True)
         await interaction.followup.send(await self.render_list(interaction.guild), ephemeral=True)
 
+    @app_commands.command(name="unlinked", description="Show Silo accounts that no Discord member is linked to")
+    async def unlinked(self, interaction: discord.Interaction) -> None:
+        if not self._allowed(interaction):
+            return await self._deny(interaction)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            accounts = await self.m.accounts()
+        except SiloError:
+            return await interaction.followup.send(
+                "Couldn't reach Silo just now. Try again in a moment.", ephemeral=True
+            )
+        await interaction.followup.send(
+            render_unlinked(accounts, dict(self.m.store.links)), ephemeral=True
+        )
+
     async def render_list(self, guild: discord.Guild) -> str:
         links = dict(self.m.store.links)
         lines: list[str] = []
@@ -573,11 +622,4 @@ class WatchingCommands(app_commands.Group):
                 which = ""
             dot = "🟢 " if mid in self.m.store.assigned else ""
             lines.append(f"{dot}<@{mid}> → **{acct}**{which}")
-        out, used = [], 0
-        for i, line in enumerate(lines):
-            if used + len(line) + 1 > 1900:
-                out.append(f"…and {len(lines) - i} more")
-                break
-            out.append(line)
-            used += len(line) + 1
-        return "\n".join(out)
+        return _fit(lines)
