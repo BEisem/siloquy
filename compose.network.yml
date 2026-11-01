@@ -1,0 +1,17 @@
+# Optional: join the Docker network your Silo container is on, so Siloquy can
+# reach it by container name (e.g. SILO_URL=http://silo:8080) and the API key
+# never leaves Docker's internal network.
+#
+# Enable it in .env:
+#   COMPOSE_FILE=docker-compose.yml:compose.network.yml
+#   SILO_NETWORK=<network name>     # find it with: docker network ls
+
+services:
+  siloquy:
+    networks:
+      - silo
+
+networks:
+  silo:
+    external: true
+    name: ${SILO_NETWORK:?Set SILO_NETWORK in .env}

@@ -1,0 +1,8 @@
+secrets/
+data/
+.env
+*.pyc
+__pycache__/
+.git/
+.github/
+tests/

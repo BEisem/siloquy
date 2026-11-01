@@ -1,0 +1,18 @@
+# Optional: Saltbox preset. Joins the "saltbox" Docker network so Siloquy
+# reaches Silo at http://silo:8080, and adds the label Saltbox backups use to
+# stop and start managed containers.
+#
+# Enable it in .env:
+#   COMPOSE_FILE=docker-compose.yml:compose.saltbox.yml
+#   SILO_URL=http://silo:8080
+
+services:
+  siloquy:
+    networks:
+      - saltbox
+    labels:
+      com.github.saltbox.saltbox_managed: "true"
+
+networks:
+  saltbox:
+    external: true
