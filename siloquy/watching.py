@@ -173,23 +173,23 @@ def role_problem(guild: discord.Guild, role_id: int) -> str | None:
     return None
 
 
-def exposed_roles(guild: discord.Guild, keep_id: int) -> int:
-    """How many *other* roles with mod/admin powers sit below Siloquy's role.
+def exposed_roles(guild: discord.Guild, keep_id: int) -> list[discord.Role]:
+    """*Other* roles with mod/admin powers that sit below Siloquy's role.
 
     With Manage Roles, a leaked bot token could hand any of them out.
     """
     me = guild.me
     if me is None:
-        return 0
-    return sum(
-        1
+        return []
+    return [
+        r
         for r in guild.roles
         if r < me.top_role
         and r.id != keep_id
         and not r.is_default()
         and not r.managed
         and r.permissions.value & DANGEROUS.value
-    )
+    ]
 
 
 class WatchingRole:
@@ -246,11 +246,19 @@ class WatchingRole:
                 self.tracker.seed(self.store.assigned, time.monotonic())
                 exposed = exposed_roles(guild, self.role_id)
                 if exposed:
+                    top = guild.me.top_role
                     log.warning(
-                        "Siloquy's role sits above %d other role(s) that have moderator/admin "
-                        "permissions. With Manage Roles, a leaked bot token could hand those "
-                        "out. Move Siloquy's role down to just above the watching role.",
-                        exposed,
+                        "Siloquy's highest role is '%s' (position %d). Below it are %d other "
+                        "role(s) with moderator/admin permissions: %s. With Manage Roles, a "
+                        "leaked bot token could hand those out. Move Siloquy's role down to "
+                        "just above the watching role, or remove those permissions.",
+                        top.name[:50], top.position, len(exposed),
+                        ", ".join(
+                            f"'{r.name[:50]}' (position {r.position}: "
+                            + ", ".join(n for n, v in discord.Permissions(r.permissions.value & DANGEROUS.value) if v)
+                            + ")"
+                            for r in exposed[:10]
+                        ),
                     )
                 log.info("Watching role enabled (%d linked member(s))", len(self.store.links))
 

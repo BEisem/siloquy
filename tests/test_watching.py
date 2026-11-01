@@ -197,7 +197,7 @@ class RoleSafetyTests(unittest.TestCase):
         g.roles.append(make_role(g, 50, 3, discord.Permissions(kick_members=True).value))
         g.roles.append(make_role(g, 51, 4, discord.Permissions(send_messages=True).value))
         g.roles.append(make_role(g, 52, 7, discord.Permissions(administrator=True).value))  # above bot
-        self.assertEqual(w.exposed_roles(g, ROLE), 1)
+        self.assertEqual([r.id for r in w.exposed_roles(g, ROLE)], [50])
 
 
 # ---------------------------------------------------------------- manager
