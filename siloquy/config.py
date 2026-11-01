@@ -174,6 +174,9 @@ class Config:
     allow_unscoped_key: bool
     log_level: str
     resource_scope: str = "silo"
+    # Optional @Watching role. None = feature off.
+    watching_role_id: int | None = None
+    watching_grace_seconds: int = 60
 
     @property
     def secrets(self) -> tuple[str, ...]:
@@ -212,6 +215,18 @@ def load_config(env: dict[str, str] | None = None) -> Config:
     if level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
         raise ConfigError("LOG_LEVEL must be DEBUG, INFO, WARNING or ERROR")
 
+    role_raw = env.get("WATCHING_ROLE_ID", "").strip()
+    watching_role_id: int | None = None
+    if role_raw:
+        if not role_raw.isdigit() or not 17 <= len(role_raw) <= 20:
+            raise ConfigError(
+                "WATCHING_ROLE_ID must be a Discord role ID "
+                "(Developer Mode on -> right-click the role -> Copy Role ID)"
+            )
+        watching_role_id = int(role_raw)
+        if watching_role_id == int(guild_raw):
+            raise ConfigError("WATCHING_ROLE_ID can't be the @everyone role")
+
     silo_api_key = _read_secret("SILO_API_KEY", env)
     if not silo_api_key.reveal().startswith("sa_"):
         raise ConfigError(
@@ -233,4 +248,6 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         allow_unscoped_key=_bool(env, "ALLOW_UNSCOPED_KEY", False),
         log_level=level,
         resource_scope=scope,
+        watching_role_id=watching_role_id,
+        watching_grace_seconds=_int(env, "WATCHING_GRACE_SECONDS", 60, 0, 900),
     )

@@ -9,6 +9,8 @@ Security properties:
     the state file). It never touches any other channel.
   * Channels it creates deny Connect to @everyone, so they act as display-only
     labels.
+  * The optional watching role (watching.py) adds admin-only /watching
+    commands and the Manage Roles permission; it is off unless configured.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ import time
 from pathlib import Path
 
 import discord
+from discord import app_commands
 
 from .config import Config
 from .silo import SiloAuthError, SiloClient, SiloError
@@ -33,6 +36,7 @@ from .stats import (
     Snapshot,
     render,
 )
+from .watching import MANAGE_ROLES, WatchingCommands, WatchingRole
 
 log = logging.getLogger(__name__)
 
@@ -146,6 +150,13 @@ class Siloquy(discord.Client):
         self._users_at = 0.0
         self._cpu = SiloCpuTracker()
         self._last_problem: str | None = None
+        self.tree = app_commands.CommandTree(self)
+        self.tree.on_error = self._on_command_error
+        self.watching = WatchingRole(config, silo)
+
+    @property
+    def invite_permissions(self) -> int:
+        return INVITE_PERMISSIONS | (MANAGE_ROLES if self.watching.enabled else 0)
 
     # ----- lifecycle -----------------------------------------------------
 
@@ -155,7 +166,42 @@ class Siloquy(discord.Client):
             # A different server than last time: don't touch the old IDs.
             self.state.categories, self.state.channels = {}, {}
         self.state.guild_id = self.cfg.guild_id
+        self.watching.load()
+        await self._sync_commands()
         self.loop.create_task(self._update_loop(), name="siloquy-updater")
+
+    async def _on_command_error(
+        self, interaction: discord.Interaction, error: app_commands.AppCommandError
+    ) -> None:
+        # Type only: Discord errors can echo request payloads.
+        cause = getattr(error, "original", error)
+        log.warning("/watching command failed (%s)", type(cause).__name__)
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send("Something went wrong; check Siloquy's log.", ephemeral=True)
+            else:
+                await interaction.response.send_message("Something went wrong; check Siloquy's log.", ephemeral=True)
+        except discord.HTTPException:
+            pass
+
+    async def _sync_commands(self) -> None:
+        """Register /watching in our one server, or remove it when switched off."""
+        guild = discord.Object(self.cfg.guild_id)
+        self.tree.clear_commands(guild=guild)
+        if self.watching.enabled:
+            self.tree.add_command(WatchingCommands(self.watching), guild=guild)
+        try:
+            await self.tree.sync(guild=guild)
+        except discord.Forbidden:
+            if self.watching.enabled:
+                log.error(
+                    "Discord refused to register /watching. Re-invite the bot with: "
+                    "https://discord.com/oauth2/authorize?client_id=%s"
+                    "&scope=bot+applications.commands&permissions=%s",
+                    self.application_id, self.invite_permissions,
+                )
+        except (discord.HTTPException, discord.RateLimited) as exc:
+            log.warning("Could not register slash commands (%s)", type(exc).__name__)
 
     async def on_ready(self) -> None:
         log.info("Connected to Discord as bot user %s", self.user.id if self.user else "?")
@@ -166,17 +212,26 @@ class Siloquy(discord.Client):
         if guild is None:
             log.error(
                 "The bot is not in server %s. Invite it with: "
-                "https://discord.com/oauth2/authorize?client_id=%s&scope=bot&permissions=%s",
-                self.cfg.guild_id, self.application_id, INVITE_PERMISSIONS,
+                "https://discord.com/oauth2/authorize?client_id=%s"
+                "&scope=bot+applications.commands&permissions=%s",
+                self.cfg.guild_id, self.application_id, self.invite_permissions,
             )
             return
         await self._ensure_layout(guild)
+        await self._watching_ready(guild)
+
+    async def _watching_ready(self, guild: discord.Guild) -> None:
+        try:
+            await self.watching.on_ready(guild)
+        except Exception as exc:  # type only: Discord errors can echo payloads
+            log.warning("Watching role setup failed (%s)", type(exc).__name__)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         if guild.id != self.cfg.guild_id:
             await self._leave_foreign(guild)
         else:
             await self._ensure_layout(guild)
+            await self._watching_ready(guild)
 
     async def _leave_foreign(self, guild: discord.Guild) -> None:
         log.warning("Leaving server %s: it is not DISCORD_GUILD_ID", guild.id)
@@ -329,6 +384,7 @@ class Siloquy(discord.Client):
                 guild = self.get_guild(self.cfg.guild_id)
                 if guild is not None:
                     snap = await self._collect()
+                    await self._update_watching(guild, snap.sessions)
                     await self._apply(guild, render(snap, self.cfg.resource_scope))
                 auth_failures = 0
             except SiloAuthError as exc:
@@ -353,6 +409,12 @@ class Siloquy(discord.Client):
             except Exception:  # keep the loop alive; log type only, no data
                 log.exception("Unexpected error in update loop")
             await asyncio.sleep(self.cfg.poll_seconds)
+
+    async def _update_watching(self, guild: discord.Guild, sessions) -> None:
+        try:
+            await self.watching.apply(guild, sessions)
+        except Exception as exc:  # never let it stop the stats; type only
+            log.warning("Watching role update failed (%s)", type(exc).__name__)
 
     def _renames_in_window(self, key: str, now: float) -> int:
         return sum(1 for t in self.state.renames.get(key, []) if 0 <= now - t < RENAME_WINDOW)
