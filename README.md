@@ -142,7 +142,7 @@ Your `.env` is never part of an update, so your settings stay put.
 
 ### 6. Start it
 ```bash
-docker compose up -d --build
+docker compose up -d
 docker logs -f siloquy
 ```
 
@@ -156,8 +156,19 @@ Siloquy's categories and channels already give the bot the access it needs, so i
 ### Updating
 ```bash
 cd /opt/siloquy && git pull
-docker compose up -d --build --force-recreate
+docker compose pull && docker compose up -d
 ```
+
+`git pull` updates the compose files and docs. `docker compose pull` fetches the new image. To stay on one version, set `SILOQUY_TAG` in `.env`, for example `SILOQUY_TAG=1.2` (gets 1.2.x fixes only) or `SILOQUY_TAG=1.2.0`.
+
+### Prebuilt image or build it yourself
+By default Siloquy runs the image GitHub builds from this repo (`ghcr.io/beisem/siloquy`), for both Intel/AMD and ARM. Each image is built only after the tests pass, and comes with a signed record of how it was built. You can check that record yourself:
+
+```bash
+gh attestation verify oci://ghcr.io/beisem/siloquy:latest --owner BEisem
+```
+
+If you'd rather build from source, add `compose.build.yml` to `COMPOSE_FILE` in `.env` (see `.env.example`). Then use `docker compose up -d --build` instead of `pull`.
 
 ### Removing it
 1. Run `docker compose down`.
@@ -192,6 +203,7 @@ docker compose up -d --build --force-recreate
 | `POLL_SECONDS` | `30` | 15–240. |
 | `USERS_POLL_SECONDS` | `900` | How often to recount users. |
 | `STATS_CATEGORY` / `PERFORMANCE_CATEGORY` | `📡 Silo Stats` / `📊 Performance` | Only used when the categories are first created. Rename them in Discord any time. |
+| `SILOQUY_TAG` | `latest` | Image version to run, e.g. `1.2` or `1.2.0`. |
 | `RESOURCE_SCOPE` | `silo` | `silo` shows Silo's own CPU and RAM, including transcoders. `host` shows the whole machine. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR`. |
 | `ALLOW_UNSCOPED_KEY` | `false` | Leave it `false`. |

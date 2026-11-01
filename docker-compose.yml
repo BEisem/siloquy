@@ -1,15 +1,16 @@
 # Siloquy: Discord stats channels for Silo.
 #
 #   cp .env.example .env    # fill in your settings
-#   docker compose up -d --build
+#   docker compose up -d
 #
+# Uses the prebuilt image from GitHub. To build from source instead, see
+# compose.build.yml.
 # Publishes no ports: nothing can connect *to* this container.
 # Saltbox users: see compose.saltbox.yml (enabled with one line in .env).
 
 services:
   siloquy:
-    build: .
-    image: siloquy:local
+    image: ghcr.io/beisem/siloquy:${SILOQUY_TAG:-latest}
     container_name: siloquy
     restart: unless-stopped
     env_file: .env

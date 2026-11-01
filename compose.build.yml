@@ -1,0 +1,13 @@
+# Optional: build the image from this source folder instead of pulling the
+# prebuilt one from GitHub.
+#
+# Enable it in .env (add it to any preset you already use, colon-separated):
+#   COMPOSE_FILE=docker-compose.yml:compose.build.yml
+#   COMPOSE_FILE=docker-compose.yml:compose.saltbox.yml:compose.build.yml
+# Then: docker compose up -d --build
+
+services:
+  siloquy:
+    build: .
+    image: siloquy:local
+    pull_policy: build
