@@ -77,7 +77,17 @@ That permission number covers **View Channels**, **Manage Channels** and **Conne
 To find your **server ID**, turn on Discord **Settings → Advanced → Developer Mode**, then right-click your server's icon and choose **Copy Server ID**.
 
 ### 3. Create a read-only Silo API key
-Silo's **Create API Key** dialog doesn't offer a scope choice yet, so keys made there have **full admin access**. Siloquy refuses to run with those. Instead, create the key from your browser's developer console:
+1. In Silo, signed in as an **admin**, go to **Admin → API Keys** and click **Create API Key**.
+2. **Label:** `Siloquy`. **User:** an **admin** account, usually your own. Admin scopes only work on an admin account's key.
+3. **Access:** choose **Selected scopes** and tick **only `admin:monitor:read`**. Leave every other scope unticked: Siloquy doesn't need them, and each one gives the key more power if it ever leaks.
+4. Click **Create**, then **Copy & Close**. Silo shows the key only once, and it can't be changed later; if you get the scope wrong, revoke the key and make a new one.
+
+The key list should now show `admin:monitor:read` in the **Access** column. If it says **Full access**, Siloquy will refuse to start with it.
+
+<details>
+<summary>Silo build without a scope choice in the dialog?</summary>
+
+Older Silo builds only make full-access keys from the dialog. Update Silo, or create the key from your browser's developer console instead:
 
 1. Open Silo in Chrome, signed in as an **admin**, and open DevTools (**⌘⌥I** on Mac or **F12** elsewhere).
 2. **Network** tab: filter by `/api/v2/`, click **Fetch/XHR**, and refresh the page. Click any request with status 200, then under **Request Headers** copy:
@@ -105,6 +115,8 @@ prompt("Press Cmd/Ctrl+A, then Cmd/Ctrl+C", out.key)
 ```
 
 Select all, copy, and click **Cancel**. Silo never shows the key again, and a partial copy won't work. When you're done, close the tab.
+
+</details>
 
 ### 4. Install
 ```bash
@@ -215,7 +227,8 @@ It uses the same read-only Silo key. It doesn't need any extra Discord intents.
 | Log message | Fix |
 |---|---|
 | `API key was rejected (HTTP 401)` | The key file is wrong. `sudo wc -c secrets/silo_api_key` must print **67** and `sudo head -c 3 secrets/silo_api_key` must print `sa_`. If not, create a new key (step 3), rewrite the file, and revoke the bad key in Silo. Then run `docker compose up -d --force-recreate`, because the key is only read at startup. |
-| `Refusing to run: the Silo API key is NOT scoped` | The key has full admin access. Create one with step 3, then revoke the old one. |
+| `… returned 403: check the API key …` | The key is scoped but belongs to a **non-admin** account, so Silo refuses its admin requests. Create a new key with step 3 with **User** set to an admin account, then revoke this one. |
+| `Refusing to run: the Silo API key is NOT scoped` | The key has full admin access: **Full access** was left selected when it was made. Create a new one with step 3 (**Selected scopes → `admin:monitor:read`**), then revoke the old one. |
 | `The bot is not in server …` | Invite it again with the link from step 2. |
 | `No permission to rename the … channel` | On each Siloquy category, give the bot's role **View Channel**, **Connect** and **Manage Channels**, then sync the channels. |
 | `SILO_URL uses plain http to a non-internal host` | Use `https`, a LAN IP, `host.docker.internal`, or the shared Docker network. |
